@@ -169,6 +169,71 @@ export default function JobstreamWidget() {
   const isValidLocationType = (val) =>
     val && val.toLowerCase() !== 'not specified' && val.trim() !== '';
 
+  // Auto-generate quick-filter chips from feed data
+  const quickFilters = React.useMemo(() => {
+    if (!jobs.length) return [];
+
+    const STOP_WORDS = new Set([
+      'a','an','the','and','or','of','to','in','for','with','at','by','from',
+      'on','as','is','are','be','was','were','will','have','has','had',
+      'not','but','so','if','it','its','this','that','we','you','they',
+      'our','your','their','i','my','me','us','ii','iii','iv',
+    ]);
+
+    // Frequency count of meaningful title words
+    const freq = {};
+    jobs.forEach(job => {
+      job.title.toLowerCase()
+        .replace(/[^a-z\s]/g, ' ')
+        .split(/\s+/)
+        .filter(w => w.length > 2 && !STOP_WORDS.has(w))
+        .forEach(w => { freq[w] = (freq[w] || 0) + 1; });
+    });
+
+    const topKeywords = Object.entries(freq)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([word]) => ({
+        label: word.charAt(0).toUpperCase() + word.slice(1),
+        kind: 'keyword',
+        value: word,
+      }));
+
+    // Location chips (Remote / Hybrid first)
+    const locationOrder = ['remote', 'hybrid', 'on-site', 'onsite', 'in-office'];
+    const locationChips = uniqueLocations
+      .filter(v => v !== 'all')
+      .sort((a, b) => {
+        const ai = locationOrder.indexOf(a.toLowerCase());
+        const bi = locationOrder.indexOf(b.toLowerCase());
+        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+      })
+      .map(v => ({ label: v, kind: 'location', value: v }));
+
+    // Job type chips
+    const typeChips = uniqueTypes
+      .filter(v => v !== 'all')
+      .map(v => ({ label: v, kind: 'type', value: v }));
+
+    return [...locationChips, ...typeChips, ...topKeywords];
+  }, [jobs, uniqueLocations, uniqueTypes]);
+
+  const isChipActive = (chip) => {
+    if (chip.kind === 'location') return locationFilter === chip.value;
+    if (chip.kind === 'type') return typeFilter === chip.value;
+    return searchTerm.toLowerCase() === chip.value.toLowerCase();
+  };
+
+  const handleChipClick = (chip) => {
+    if (chip.kind === 'location') {
+      setLocationFilter(isChipActive(chip) ? 'all' : chip.value);
+    } else if (chip.kind === 'type') {
+      setTypeFilter(isChipActive(chip) ? 'all' : chip.value);
+    } else {
+      setSearchTerm(isChipActive(chip) ? '' : chip.label);
+    }
+  };
+
   if (loading) {
     return (
       <div style={styles.container}>
@@ -220,6 +285,31 @@ export default function JobstreamWidget() {
           </button>
         ))}
       </div>
+
+      {quickFilters.length > 0 && (
+        <div style={styles.chipRow}>
+          {quickFilters.map(chip => (
+            <button
+              key={`${chip.kind}-${chip.value}`}
+              onClick={() => handleChipClick(chip)}
+              style={{
+                ...styles.chip,
+                ...(isChipActive(chip) ? styles.chipActive : {}),
+              }}
+            >
+              {chip.label}
+            </button>
+          ))}
+          {(searchTerm || locationFilter !== 'all' || typeFilter !== 'all') && (
+            <button
+              onClick={() => { setSearchTerm(''); setLocationFilter('all'); setTypeFilter('all'); }}
+              style={styles.chipClear}
+            >
+              ✕ Clear
+            </button>
+          )}
+        </div>
+      )}
 
       <div style={styles.controls}>
         <input
@@ -312,7 +402,12 @@ export default function JobstreamWidget() {
                 </div>
 
                 {/* Salary — visible in preview */}
-                {salary && <div style={styles.salary}>{salary}</div>}
+                {salary && (
+                  <div style={styles.salary}>
+                    <span style={styles.salaryLabel}>Salary</span>
+                    {salary}
+                  </div>
+                )}
 
                 {/* Summary */}
                 {job.summary && <p style={styles.jobSummary}>{job.summary}</p>}
@@ -330,15 +425,15 @@ export default function JobstreamWidget() {
                 {/* Footer: Apply Now (always) + I Applied tracker (expanded only) + expand cue */}
                 <div style={styles.jobFooter}>
                   <div style={styles.jobFooterLeft}>
-                    <a
-                      href={job.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.open(job.url, '_blank', 'noopener,noreferrer');
+                      }}
                       style={styles.applyButton}
                     >
                       Apply Now →
-                    </a>
+                    </button>
                     {isExpanded && (
                       <button
                         onClick={(e) => toggleApplied(job.referencenumber, e)}
@@ -592,12 +687,62 @@ const styles = {
     fontWeight: '500',
   },
 
+  chipRow: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '0.5rem',
+    marginBottom: '1.25rem',
+  },
+
+  chip: {
+    padding: '0.375rem 0.875rem',
+    fontSize: '0.8125rem',
+    fontWeight: '500',
+    border: '1.5px solid #E5E5E5',
+    backgroundColor: '#fff',
+    color: '#555',
+    cursor: 'pointer',
+    fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+    borderRadius: '999px',
+    whiteSpace: 'nowrap',
+  },
+
+  chipActive: {
+    backgroundColor: '#E48715',
+    borderColor: '#E48715',
+    color: '#fff',
+  },
+
+  chipClear: {
+    padding: '0.375rem 0.875rem',
+    fontSize: '0.8125rem',
+    fontWeight: '500',
+    border: '1.5px solid #DDD',
+    backgroundColor: 'transparent',
+    color: '#999',
+    cursor: 'pointer',
+    fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+    borderRadius: '999px',
+    whiteSpace: 'nowrap',
+  },
+
   // Salary elevated to preview — shown before summary
   salary: {
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: '0.5rem',
     fontSize: '1rem',
     fontWeight: '700',
-    color: '#333333',
+    color: '#2E7D32',
     marginBottom: '0.75rem',
+  },
+
+  salaryLabel: {
+    fontSize: '0.6875rem',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
+    color: '#999',
   },
 
   jobSummary: {
